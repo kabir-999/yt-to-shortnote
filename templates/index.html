@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Video Summarizer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            text-align: center;
+        }
+        input {
+            width: 60%;
+            padding: 10px;
+            margin: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #218838;
+        }
+        #summary {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            background: #f9f9f9;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h2>YouTube Video Summarizer</h2>
+    <input type="text" id="video_url" placeholder="Enter YouTube Video URL">
+    <select id="language">
+        <option value="en">English</option>
+        <option value="es">Spanish</option>
+        <option value="fr">French</option>
+        <option value="de">German</option>
+    </select>
+    <button onclick="getSummary()">Summarize</button>
+    
+    <div id="summary">
+        <h3>Summary:</h3>
+        <p id="summaryText"></p>
+    </div>
+
+    <script>
+        function getSummary() {
+            let videoUrl = document.getElementById("video_url").value;
+            let language = document.getElementById("language").value;
+
+            if (!videoUrl) {
+                alert("Please enter a YouTube video URL.");
+                return;
+            }
+
+            fetch("/summarize", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({ video_url: videoUrl, language: language })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert("Error: " + data.error);
+                } else {
+                    document.getElementById("summaryText").innerText = data.summary;
+                    document.getElementById("summary").style.display = "block";
+                }
+            })
+            .catch(error => console.error("Error:", error));
+        }
+    </script>
+</body>
+</html>

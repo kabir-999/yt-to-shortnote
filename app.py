@@ -2,8 +2,8 @@ import os
 import google.generativeai as genai
 from flask import Flask, request, jsonify, render_template
 from dotenv import load_dotenv
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 import requests
+from bs4 import BeautifulSoup
 
 # Load environment variables
 load_dotenv()
@@ -30,7 +30,7 @@ generation_config = {
 model = genai.GenerativeModel(
     model_name="gemini-2.0-flash-exp",
     generation_config=generation_config,
-    system_instruction="Give a detailed summary of the provided YouTube video.",
+    system_instruction="Provide a detailed summary based on the video title, as if you've watched the video.",
 )
 
 # Start a chat session
@@ -40,59 +40,53 @@ chat_session = model.start_chat(history=[])
 def home():
     return render_template("index.html")
 
-# ✅ Function to extract video ID from URL
-def extract_video_id(video_url):
-    if "watch?v=" in video_url:
-        return video_url.split("v=")[-1].split("&")[0]
-    elif "youtu.be/" in video_url:
-        return video_url.split("/")[-1].split("?")[0]
-    return None
+# ✅ Web Scraping to Search YouTube Without API Key
+def search_youtube_video(title):
+    search_query = title.replace(" ", "+")
+    url = f"https://www.youtube.com/results?search_query={search_query}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        return None, None
 
-# ✅ Function to get YouTube transcript, fallback to Gemini AI if unavailable
-def get_youtube_transcript(video_url):
-    video_id = extract_video_id(video_url)
-    if not video_id:
-        return None, "Invalid YouTube URL format."
+    soup = BeautifulSoup(response.text, "html.parser")
 
-    try:
-        # ✅ Try to fetch transcript
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        transcript = transcript_list.find_transcript(['en']).fetch()
-        transcript_text = " ".join([t["text"] for t in transcript])
-        return transcript_text, None  # Success
+    for link in soup.find_all("a", href=True):
+        if "/watch?v=" in link["href"]:
+            video_id = link["href"].split("=")[-1]
+            video_title = link.text.strip() if link.text else title
+            return video_id, video_title
 
-    except TranscriptsDisabled:
-        return None, "Transcripts are disabled for this video."
-    except NoTranscriptFound:
-        return None, "No transcripts were found for this video."
-    except Exception as e:
-        return None, f"Error fetching transcript: {str(e)}"
+    return None, None
 
-# ✅ Generate summary using Gemini AI (with or without transcript)
+# ✅ Generate a summary using Gemini AI
 @app.route('/summarize', methods=['POST'])
 def summarize_video():
     try:
         data = request.json
-        video_url = data.get("video_url", "")
+        video_title = data.get("video_title", "")
 
-        if not video_url:
-            return jsonify({"error": "YouTube video URL is required"}), 400
+        if not video_title:
+            return jsonify({"error": "YouTube video title is required"}), 400
 
-        # ✅ Get transcript (or fallback to Gemini AI)
-        transcript, error = get_youtube_transcript(video_url)
+        # Search for video using web scraping
+        video_id, actual_title = search_youtube_video(video_title)
+        if not video_id:
+            return jsonify({"error": "No YouTube video found for this title."}), 404
 
-        if error:
-            # ✅ If transcript is missing, get video title and ask Gemini AI
-            response = chat_session.send_message(
-                f"The video at {video_url} does not have subtitles. "
-                f"Based on the title, generate a summary as if you had watched it."
-            )
-        else:
-            # ✅ If transcript exists, ask Gemini to summarize it
-            response = chat_session.send_message(f"Summarize this video transcript:\n\n{transcript}")
+        # Request Gemini AI to generate the summary (correct video title)
+        response = chat_session.send_message(
+            f"Provide a detailed summary based on the video titled '{actual_title}', as if you've watched it."
+        )
 
+        # Return the summary and video details
         return jsonify({
-            "video_url": video_url,
+            "video_title": actual_title,
+            "video_id": video_id,
+            "video_url": f"https://www.youtube.com/watch?v={video_id}",
             "summary": response.text
         })
     

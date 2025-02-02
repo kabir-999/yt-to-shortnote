@@ -2,7 +2,7 @@ import os
 import google.generativeai as genai
 from flask import Flask, request, jsonify, render_template
 from dotenv import load_dotenv
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+import requests
 
 # Load environment variables
 load_dotenv()
@@ -15,6 +15,11 @@ api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
     raise ValueError("GEMINI_API_KEY is missing in environment variables.")
 genai.configure(api_key=api_key)
+
+# YouTube API Key (Required)
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+if not YOUTUBE_API_KEY:
+    raise ValueError("YOUTUBE_API_KEY is missing in environment variables.")
 
 # Model Configuration
 generation_config = {
@@ -29,7 +34,7 @@ generation_config = {
 model = genai.GenerativeModel(
     model_name="gemini-2.0-flash-exp",
     generation_config=generation_config,
-    system_instruction="Give short notes of the video link being provided.",
+    system_instruction="Give a detailed summary of the provided YouTube video title.",
 )
 
 # Start a chat session
@@ -39,53 +44,53 @@ chat_session = model.start_chat(history=[])
 def home():
     return render_template("index.html")
 
-# ✅ Improved Transcript Fetching Function
-def get_youtube_transcript(video_url, language="en"):
-    try:
-        # Extract video ID
-        if "watch?v=" in video_url:
-            video_id = video_url.split("v=")[-1].split("&")[0]
-        elif "youtu.be/" in video_url:
-            video_id = video_url.split("/")[-1].split("?")[0]
-        else:
-            return "Invalid YouTube URL format."
+# ✅ Function to search for a YouTube video by title
+def search_youtube_video(title):
+    search_url = "https://www.googleapis.com/youtube/v3/search"
+    params = {
+        "part": "snippet",
+        "q": title,
+        "type": "video",
+        "key": YOUTUBE_API_KEY,
+        "maxResults": 1  # Fetch only the top result
+    }
+    
+    response = requests.get(search_url, params=params)
+    data = response.json()
 
-        # ✅ Get available transcript languages
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        available_languages = [t.language_code for t in transcript_list]
+    if "items" in data and len(data["items"]) > 0:
+        video_id = data["items"][0]["id"]["videoId"]
+        video_title = data["items"][0]["snippet"]["title"]
+        return video_id, video_title
+    else:
+        return None, None
 
-        # ✅ Use requested language if available, otherwise pick the first available one
-        selected_language = language if language in available_languages else available_languages[0]
-
-        # ✅ Fetch transcript in the selected language
-        transcript = transcript_list.find_transcript([selected_language]).fetch()
-        transcript_text = " ".join([t["text"] for t in transcript])
-
-        return transcript_text
-    except TranscriptsDisabled:
-        return "Transcripts are disabled for this video."
-    except NoTranscriptFound:
-        return "No transcripts were found for this video."
-    except Exception as e:
-        return f"Error fetching transcript: {str(e)}"
-
-# ✅ Summarize transcript using Gemini AI
+# ✅ Generate a summary using Gemini AI
 @app.route('/summarize', methods=['POST'])
 def summarize_video():
     try:
         data = request.json
-        video_url = data.get("video_url", "")
-        language = data.get("language", "en")
+        video_title = data.get("video_title", "")
 
-        if not video_url:
-            return jsonify({"error": "YouTube video URL is required"}), 400
+        if not video_title:
+            return jsonify({"error": "YouTube video title is required"}), 400
 
-        transcript = get_youtube_transcript(video_url, language)
-        if "Error" in transcript or "No transcripts" in transcript:
-            return jsonify({"error": transcript}), 500
+        # Search for video
+        video_id, actual_title = search_youtube_video(video_title)
+        if not video_id:
+            return jsonify({"error": "No YouTube video found for this title."}), 404
 
-        response = chat_session.send_message(f"Summarize this video transcript:\n\n{transcript}")
-        return jsonify({"summary": response.text})
+        # Request Gemini AI to generate the summary
+        response = chat_session.send_message(
+            f"Provide a detailed summary of a YouTube video titled '{actual_title}'. Assume you have watched the video."
+        )
+
+        return jsonify({
+            "video_title": actual_title,
+            "video_id": video_id,
+            "summary": response.text
+        })
+    
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

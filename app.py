@@ -2,13 +2,14 @@ import os
 import google.generativeai as genai
 from flask import Flask, request, jsonify, render_template
 from dotenv import load_dotenv
-from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+import requests
 
 # Load environment variables
 load_dotenv()
 
-# Initialize Flask app with correct template and static folder paths
-app = Flask(__name__, template_folder="templates", static_folder="static")
+# Initialize Flask app
+app = Flask(__name__)
 
 # Configure Gemini API
 api_key = os.getenv("GEMINI_API_KEY")
@@ -29,38 +30,45 @@ generation_config = {
 model = genai.GenerativeModel(
     model_name="gemini-2.0-flash-exp",
     generation_config=generation_config,
-    system_instruction="Give short notes of the video link being provided.",
+    system_instruction="Give a detailed summary of the provided YouTube video.",
 )
 
 # Start a chat session
 chat_session = model.start_chat(history=[])
 
-# ✅ Corrected Route to Serve index.html
 @app.route('/')
 def home():
-    return render_template("index.html")  # ✅ Corrected: No need to mention templates/
+    return render_template("index.html")
 
-# ✅ Extract transcript from YouTube video
+# ✅ Function to extract video ID from URL
+def extract_video_id(video_url):
+    if "watch?v=" in video_url:
+        return video_url.split("v=")[-1].split("&")[0]
+    elif "youtu.be/" in video_url:
+        return video_url.split("/")[-1].split("?")[0]
+    return None
+
+# ✅ Function to get YouTube transcript, fallback to Gemini AI if unavailable
 def get_youtube_transcript(video_url):
+    video_id = extract_video_id(video_url)
+    if not video_id:
+        return None, "Invalid YouTube URL format."
+
     try:
-        if "watch?v=" in video_url:
-            video_id = video_url.split("v=")[-1].split("&")[0]  # Handle extra params
-        elif "youtu.be/" in video_url:
-            video_id = video_url.split("/")[-1].split("?")[0]
-        else:
-            return "Invalid YouTube URL format."
+        # ✅ Try to fetch transcript
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        transcript = transcript_list.find_transcript(['en']).fetch()
+        transcript_text = " ".join([t["text"] for t in transcript])
+        return transcript_text, None  # Success
 
-        # Fetch transcript
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-
-        # Convert transcript into a single text string
-        transcript_text = " ".join([t["text"] for t in transcript_list])
-
-        return transcript_text
+    except TranscriptsDisabled:
+        return None, "Transcripts are disabled for this video."
+    except NoTranscriptFound:
+        return None, "No transcripts were found for this video."
     except Exception as e:
-        return f"Error fetching transcript: {str(e)}"
+        return None, f"Error fetching transcript: {str(e)}"
 
-# ✅ Summarize transcript using Gemini AI
+# ✅ Generate summary using Gemini AI (with or without transcript)
 @app.route('/summarize', methods=['POST'])
 def summarize_video():
     try:
@@ -70,28 +78,24 @@ def summarize_video():
         if not video_url:
             return jsonify({"error": "YouTube video URL is required"}), 400
 
-        transcript = get_youtube_transcript(video_url)
-        if "Error" in transcript:
-            return jsonify({"error": transcript}), 500
+        # ✅ Get transcript (or fallback to Gemini AI)
+        transcript, error = get_youtube_transcript(video_url)
 
-        response = chat_session.send_message(f"Summarize this video transcript:\n\n{transcript}")
-        return jsonify({"summary": response.text})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        if error:
+            # ✅ If transcript is missing, get video title and ask Gemini AI
+            response = chat_session.send_message(
+                f"The video at {video_url} does not have subtitles. "
+                f"Based on the title, generate a summary as if you had watched it."
+            )
+        else:
+            # ✅ If transcript exists, ask Gemini to summarize it
+            response = chat_session.send_message(f"Summarize this video transcript:\n\n{transcript}")
 
-# ✅ Chat API
-@app.route('/chat', methods=['POST'])
-def chat():
-    try:
-        data = request.json
-        user_input = data.get("message", "")
-
-        if not user_input:
-            return jsonify({"error": "Message is required"}), 400
-
-        response = chat_session.send_message(user_input)
-
-        return jsonify({"response": response.text})
+        return jsonify({
+            "video_url": video_url,
+            "summary": response.text
+        })
+    
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

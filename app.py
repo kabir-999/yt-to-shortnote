@@ -29,7 +29,7 @@ generation_config = {
 model = genai.GenerativeModel(
     model_name="gemini-2.0-flash-exp",
     generation_config=generation_config,
-    system_instruction="Give short notes of the video link being provided.Find which vide the link belongs to,read the title..assume what it would contain and then provide summary.",
+    system_instruction="Give short notes of the video title being provided.",
 )
 
 # Start a chat session

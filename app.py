@@ -8,7 +8,7 @@ from youtube_transcript_api import YouTubeTranscriptApi
 load_dotenv()
 
 # Initialize Flask app with correct template and static folder paths
-app = Flask(_name_, template_folder="templates", static_folder="static")
+app = Flask(__name__, template_folder="templates", static_folder="static")
 
 # Configure Gemini API
 api_key = os.getenv("GEMINI_API_KEY")
@@ -96,5 +96,5 @@ def chat():
         return jsonify({"error": str(e)}), 500
 
 # ✅ Run Flask App
-if _name_ == "_main_":
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
